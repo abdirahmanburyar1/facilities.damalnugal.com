@@ -1,0 +1,9 @@
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="200" height="200" rx="20" fill="#4F46E5" />
+  <path d="M50 60H150V150H50V60Z" stroke="white" stroke-width="8" />
+  <path d="M50 90H150" stroke="white" stroke-width="4" />
+  <path d="M50 120H150" stroke="white" stroke-width="4" />
+  <path d="M83.3333 60V150" stroke="white" stroke-width="4" />
+  <path d="M116.667 60V150" stroke="white" stroke-width="4" />
+  <path d="M50 60L100 30L150 60" stroke="white" stroke-width="8" stroke-linejoin="round" />
+</svg>
