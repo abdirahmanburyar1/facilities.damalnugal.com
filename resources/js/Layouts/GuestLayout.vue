@@ -6,7 +6,7 @@ import { Link } from '@inertiajs/vue3';
 <template>
     <div
         class="flex min-h-screen flex-col items-center sm:justify-center sm:pt-0"
-        style="background-image: url('/assets/images/bg.jpeg'); background-size: cover; background-position: center top; background-repeat: no-repeat;"
+        style="background-image: url('/assets/images/bg.png'); background-size: cover; background-position: center top; background-repeat: no-repeat;"
     >
 
         <div
