@@ -331,6 +331,7 @@ Route::middleware(['auth', 'verified', \App\Http\Middleware\TwoFactorAuth::class
         ->group(function () {
             // Reports Dashboard
             Route::get('/', 'index')->name('index');
+            Route::post('/unified-data', 'unifiedData')->name('unified-data');
             
             // Monthly Inventory Report Interface
             Route::get('/monthly-inventory', 'monthlyInventory')->name('monthly-inventory');

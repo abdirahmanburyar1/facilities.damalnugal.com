@@ -188,12 +188,6 @@ class Product extends Model
             
             $count = $query->count();
             
-            \Log::info("Product {$this->id} ({$this->name}) consumption data check:", [
-                'facility_id' => $facilityId,
-                'total_consumptions' => $count,
-                'has_sufficient_data' => $count >= 3
-            ]);
-            
             return $count >= 3;
             
         } catch (\Exception $e) {
@@ -218,14 +212,12 @@ class Product extends Model
             
             // If no consumption data exists at all, return 0 (not a static value)
             if (!$hasAnyConsumption) {
-                \Log::info("Product {$this->id} ({$this->name}) has no consumption data for facility {$facilityId}, returning 0");
                 return 0;
             }
             
             // If we have some consumption data but less than 3 months, 
             // we could potentially use a different fallback strategy
             // For now, return 0 to indicate insufficient data
-            \Log::info("Product {$this->id} ({$this->name}) has some consumption data but insufficient for AMC calculation, returning 0");
             return 0;
             
         } catch (\Exception $e) {
@@ -430,14 +422,6 @@ class Product extends Model
                 // Calculate reorder level: (AMC × 0.46) + Buffer Stock
                 $reorderLevel = ($amc * 0.46) + $bufferStock;
                 $reorderLevel = round($reorderLevel, 2);
-                
-                \Log::info("Product {$this->id} ({$this->name}) calculated metrics:", [
-                    'amc' => $amc,
-                    'max_amc' => $maxAmc,
-                    'buffer_stock' => $bufferStock,
-                    'reorder_level' => $reorderLevel,
-                    'months_used' => $amcData['months_used'] ?? 0
-                ]);
                 
                 return [
                     'amc' => $amc,

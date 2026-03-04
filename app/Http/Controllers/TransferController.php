@@ -799,7 +799,7 @@ class TransferController extends Controller
         $warehouses = Warehouse::select('id','name')->get();
         $facilities = Facility::select('id','name')->get();
         $transferID = Transfer::generateTransferId();
-        $inventories = Product::whereHas('inventory', function($query) {
+        $inventories = Product::whereHas('inventories', function($query) {
             $query->where('facility_id', auth()->user()->facility_id);
         })
         ->select('id','name')
@@ -1399,7 +1399,7 @@ class TransferController extends Controller
     {
         try {
             // Get facility inventories directly with DB query
-            $products = Product::whereHas('inventory', function($query) {
+            $products = Product::whereHas('inventories', function($query) {
                 $query->where('facility_id', auth()->user()->facility_id)
                       ->whereHas('items', function($subQuery) {
                           $subQuery->where('quantity', '>', 0);

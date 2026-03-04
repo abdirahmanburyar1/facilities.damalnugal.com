@@ -25,7 +25,170 @@ class ReportController extends Controller
      */
     public function index()
     {
-        return Inertia::render('Reports/Index');
+        $reportTypes = [
+            ['value' => 'facility_monthly_consumption', 'label' => 'Facility LMIS Report'],
+            ['value' => 'transfer_report', 'label' => 'Transfers Report'],
+            ['value' => 'order_report', 'label' => 'Order Report'],
+            ['value' => 'inventory_movements', 'label' => 'Inventory Movements Report'],
+        ];
+
+        $reportPeriodOptions = [
+            ['value' => 'monthly', 'label' => 'Monthly'],
+            ['value' => 'bi-monthly', 'label' => 'Bi-monthly'],
+            ['value' => 'quarterly', 'label' => 'Quarterly'],
+            ['value' => 'six_months', 'label' => 'Six months'],
+            ['value' => 'yearly', 'label' => 'Yearly'],
+        ];
+
+        return Inertia::render('Reports/Index', [
+            'reportTypes' => $reportTypes,
+            'reportPeriodOptions' => $reportPeriodOptions,
+        ]);
+    }
+
+    /**
+     * Unified data endpoint for facility reports
+     */
+    public function unifiedData(Request $request)
+    {
+        $request->validate([
+            'report_type' => 'required|in:facility_monthly_consumption,transfer_report,order_report,inventory_movements',
+        ]);
+
+        $type = $request->report_type;
+        $facilityId = auth()->user()->facility_id;
+
+        if (!$facilityId) {
+            return response()->json(['message' => 'User does not belong to a facility.'], 403);
+        }
+
+        try {
+            if ($type === 'facility_monthly_consumption') {
+                $year = $request->year ?? now()->year;
+                $month = $request->month ?? now()->month;
+                $period = sprintf('%04d-%02d', $year, $month);
+
+                $report = FacilityMonthlyReport::with([
+                    'facility', 
+                    'items.product',
+                    'approvedBy',
+                    'reviewedBy',
+                    'submittedBy',
+                    'rejectedBy'
+                ])
+                ->where('report_period', $period)
+                ->where('facility_id', $facilityId)
+                ->first();
+
+                if (!$report) {
+                    return response()->json([
+                        'type' => 'facility_monthly_consumption',
+                        'data' => null,
+                        'message' => 'No report found for the specified period.'
+                    ]);
+                }
+
+                return response()->json([
+                    'type' => 'facility_monthly_consumption',
+                    'data' => $report
+                ]);
+
+            } elseif ($type === 'transfer_report') {
+                $query = Transfer::with([
+                    'toWarehouse:id,name',
+                    'fromWarehouse:id,name', 
+                    'fromFacility:id,name',
+                    'toFacility:id,name',
+                    'createdBy:id,name',
+                    'approvedBy:id,name',
+                    'dispatchedBy:id,name',
+                    'rejectedBy:id,name',
+                    'items.product:id,name'
+                ])
+                ->where(function($q) use ($facilityId) {
+                    $q->where('from_facility_id', $facilityId)
+                      ->orWhere('to_facility_id', $facilityId);
+                });
+
+                if ($request->filled('start_date')) {
+                    $query->whereDate('transfer_date', '>=', $request->start_date);
+                }
+                if ($request->filled('end_date')) {
+                    $query->whereDate('transfer_date', '<=', $request->end_date);
+                }
+                if ($request->filled('search')) {
+                    $search = $request->search;
+                    $query->where(function($q) use ($search) {
+                        $q->where('transferID', 'like', "%{$search}%")
+                          ->orWhere('note', 'like', "%{$search}%");
+                    });
+                }
+
+                $data = $query->orderBy('transfer_date', 'desc')->paginate($request->get('per_page', 15));
+                
+                return response()->json([
+                    'type' => 'transfer_report',
+                    'data' => $data
+                ]);
+
+            } elseif ($type === 'order_report') {
+                $query = Order::with([
+                    'facility:id,name',
+                    'user:id,name',
+                    'items.product:id,name'
+                ])
+                ->where('facility_id', $facilityId);
+
+                if ($request->filled('start_date')) {
+                    $query->whereDate('order_date', '>=', $request->start_date);
+                }
+                if ($request->filled('end_date')) {
+                    $query->whereDate('order_date', '<=', $request->end_date);
+                }
+                if ($request->filled('search')) {
+                    $search = $request->search;
+                    $query->where(function($q) use ($search) {
+                        $q->where('order_number', 'like', "%{$search}%")
+                          ->orWhere('notes', 'like', "%{$search}%")
+                          ->orWhere('note', 'like', "%{$search}%");
+                    });
+                }
+
+                $data = $query->orderBy('order_date', 'desc')->paginate($request->get('per_page', 15));
+                
+                return response()->json([
+                    'type' => 'order_report',
+                    'data' => $data
+                ]);
+
+            } elseif ($type === 'inventory_movements') {
+                $query = FacilityInventoryMovement::with([
+                    'facility:id,name',
+                    'product:id,name',
+                    'createdBy:id,name'
+                ])->where('facility_id', $facilityId);
+
+                if ($request->filled('start_date')) {
+                    $query->whereDate('movement_date', '>=', $request->start_date);
+                }
+                if ($request->filled('end_date')) {
+                    $query->whereDate('movement_date', '<=', $request->end_date);
+                }
+
+                $data = $query->orderBy('movement_date', 'desc')->paginate($request->get('per_page', 25));
+
+                return response()->json([
+                    'type' => 'inventory_movements',
+                    'data' => $data
+                ]);
+            }
+        } catch (\Exception $e) {
+            \Log::error('Error generating unified report: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'An error occurred while fetching report data.'
+            ], 500);
+        }
     }
 
     /**

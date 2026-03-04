@@ -1,7 +1,7 @@
 <script setup>
 import AuthenticatedLayout from "@/Layouts/AuthenticatedLayout.vue";
-import { ref, computed, watch } from "vue";
-import { router } from "@inertiajs/vue3";
+import { ref, computed, watch, onMounted, nextTick } from "vue";
+import { router, usePage } from "@inertiajs/vue3";
 import InputError from "@/Components/InputError.vue";
 import PrimaryButton from "@/Components/PrimaryButton.vue";
 import SecondaryButton from "@/Components/SecondaryButton.vue";
@@ -47,6 +47,8 @@ const filteredInventories = ref([]);
 const availableInventories = ref([]);
 const searchQuery = ref("");
 const loadingInventories = ref(false);
+const transferFormRef = ref(null);
+const transferDateInputRef = ref(null);
 
 const form = ref({
     source_type: "facility", // Always facility for facilities
@@ -115,37 +117,20 @@ const fetchInventories = async () => {
             },
         });
 
-        console.log("[SUCCESS] Fetch inventories response:", response.data);
         swalLoading.close();
-        availableInventories.value = response.data;
-        filteredInventories.value = availableInventories.value;
+        const data = response.data;
+        const list = Array.isArray(data) ? data : (data?.data && Array.isArray(data.data) ? data.data : []);
+        availableInventories.value = [...list];
+        filteredInventories.value = [...list];
         loadingInventories.value = false;
     } catch (error) {
-        console.error("[ERROR] Fetch inventories failed:", error);
-        console.error("[ERROR] Full error object:", error.response);
-
-        // Close loading dialog first
         swalLoading.close();
-
-        // Reset states
         loadingInventories.value = false;
         availableInventories.value = [];
         filteredInventories.value = [];
-
-        // Add small delay before showing error dialog to avoid timing conflicts
         setTimeout(() => {
             let errorMessage = "Failed to fetch inventories";
-
             if (error.response) {
-                console.log(
-                    "[DEBUG] Error response status:",
-                    error.response.status
-                );
-                console.log(
-                    "[DEBUG] Error response data:",
-                    error.response.data
-                );
-
                 if (typeof error.response.data === "string") {
                     errorMessage = error.response.data;
                 } else if (error.response.data && error.response.data.message) {
@@ -158,9 +143,6 @@ const fetchInventories = async () => {
             } else if (error.message) {
                 errorMessage = error.message;
             }
-
-            console.log("[DEBUG] Final error message:", errorMessage);
-
             Swal.fire({
                 title: "Error!",
                 text: errorMessage,
@@ -194,43 +176,38 @@ const validateForm = () => {
         isValid = false;
     }
 
-    // Validate that all items are properly filled
+    // Only validate rows that have a product selected; ignore empty rows (no product = next row placeholder)
     let hasValidItems = false;
 
     form.value.items.forEach((item, index) => {
-        // Check if inventory item is selected
-        if (!item.inventory_id) {
-            errors.value[`item_${index}_inventory`] =
-                "Please select an inventory item.";
-            isValid = false;
+        const hasProduct = item.product_id != null && item.product_id !== '';
+        if (!hasProduct) {
+            // Ignore this row – no item selected (empty row for "Add Another Item")
+            return;
         }
 
-        // Check if quantity is valid (must be at least 1)
-        if (item.inventory_id && (!item.quantity || item.quantity < 1)) {
+        // Row has a product selected – validate quantity from details
+        const details = Array.isArray(item.details) ? item.details : [];
+        const hasQuantity = details.some(d => parseFloat(d.quantity_to_transfer) > 0);
+        if (!hasQuantity) {
             errors.value[`item_${index}_quantity`] =
-                "Quantity must be at least 1.";
+                "Please specify quantity to transfer for at least one batch.";
             isValid = false;
+            return;
         }
 
-        // Check if quantity exceeds available quantity
-        if (item.inventory_id && item.quantity > item.available_quantity) {
-            errors.value[
-                `item_${index}_quantity`
-            ] = `Maximum available quantity is ${item.available_quantity}.`;
+        // Check no detail exceeds available quantity
+        const qtyExceeded = details.some(d => (parseFloat(d.quantity_to_transfer) || 0) > (parseFloat(d.quantity) || 0));
+        if (qtyExceeded) {
+            errors.value[`item_${index}_quantity`] =
+                "Quantity to transfer cannot exceed available quantity per batch.";
             isValid = false;
+            return;
         }
 
-        // Track if we have at least one valid item
-        if (
-            item.inventory_id &&
-            item.quantity >= 1 &&
-            item.quantity <= item.available_quantity
-        ) {
-            hasValidItems = true;
-        }
+        hasValidItems = true;
     });
 
-    // Ensure at least one valid item exists
     if (!hasValidItems) {
         errors.value.items =
             "At least one item must be selected with a valid quantity.";
@@ -252,39 +229,26 @@ fetchInventories();
 
 const submit = async () => {
     loading.value = true;
-
-    // Validate that at least one item has quantity to transfer
-    const hasItemsToTransfer = form.value.items.some(item => 
-        item.details.some(detail => 
-            parseFloat(detail.quantity_to_transfer) > 0
-        )
-    );
-
-    if (!hasItemsToTransfer) {
+    const fulfilledItems = form.value.items.filter(item => {
+        const hasProduct = item.product_id != null && item.product_id !== '';
+        const details = Array.isArray(item.details) ? item.details : [];
+        const hasQuantity = details.some(d => parseFloat(d.quantity_to_transfer) > 0);
+        return hasProduct && hasQuantity;
+    });
+    if (fulfilledItems.length === 0) {
         loading.value = false;
         Swal.fire({
             title: "No Items to Transfer",
-            text: "Please specify quantities to transfer for at least one item.",
+            text: "Please select at least one item and specify quantities to transfer.",
             icon: "warning",
             confirmButtonColor: "#4F46E5",
         });
         return;
     }
-
-    // // Filter out items with no quantity to transfer
-    const filteredItems = form.value.items.filter(item => 
-        item.product_id && item.details.some(detail => 
-            parseFloat(detail.quantity_to_transfer) > 0
-        )
-    );
-
     const submitData = {
         ...form.value,
-        items: filteredItems
+        items: fulfilledItems
     };
-
-    console.log(submitData);
-    
     await axios
         .post(route("transfers.store"), submitData)
         .then((response) => {
@@ -299,7 +263,6 @@ const submit = async () => {
             });
         })
         .catch((error) => {
-            console.error(error.response);
             loading.value = false;
             Swal.fire({
                 title: "Error!",
@@ -324,19 +287,14 @@ async function handleProductSelect(index, selected) {
             })
             .then((response) => {
                 isLoading.value[index] = false;
-                console.log(response.data);
-
                 // Initialize quantity_to_transfer and transfer_reason for each detail item
                 item.details = response.data.map(detail => ({
                     ...detail,
                     quantity_to_transfer: 0,
-                    transfer_reason: ''
+                    transfer_reason: '',
+                    transfer_reason_object: null
                 }));
-                
-                item.available_quantity = response.data?.reduce(
-                    (sum, detail) => sum + detail.quantity,
-                    0
-                );
+                item.available_quantity = getSafeAvailableQuantity({ details: response.data });
                 item.product = selected;
                 item.product_id = selected.id;
                 item.quantity = 0; // Reset main quantity
@@ -344,8 +302,6 @@ async function handleProductSelect(index, selected) {
             })
             .catch((error) => {
                 isLoading.value[index] = false;
-                console.log(error);
-
                 // Clear product fields on error
                 item.product_id = null;
                 item.product = null;
@@ -405,24 +361,99 @@ function removeItem(index) {
     }
 }
 
-function checkQuantity(index) {
+function handleProductClear(index) {
     const item = form.value.items[index];
-
-    // Ensure quantity is at least 1
-    if (item.quantity < 1) {
-        item.quantity = 1;
-        toast.info("Minimum quantity is 1");
-    }
-
-    // Ensure quantity doesn't exceed available quantity
-    if (item.quantity > item.available_quantity) {
-        // Reset to available quantity if exceeded
-        item.quantity = item.available_quantity;
-        toast.warning(
-            `Quantity reset to maximum available (${item.available_quantity})`
-        );
+    item.product = null;
+    item.product_id = null;
+    item.details = [];
+    item.quantity = 0;
+    item.available_quantity = 0;
+    if (isLoading.value[index] !== undefined) {
+        isLoading.value[index] = false;
     }
 }
+
+// Helper to safely calculate available quantity from details
+function getSafeAvailableQuantity(item) {
+    if (!item || !item.details || !Array.isArray(item.details)) return 0;
+    const total = item.details.reduce((sum, detail) => {
+        const quantity = Number(detail.quantity);
+        return sum + (isNaN(quantity) ? 0 : quantity);
+    }, 0);
+    return isNaN(total) ? 0 : total;
+}
+
+function closeItemDropdownIfOpen() {
+    const el = document.activeElement;
+    if (el && el.closest && el.closest(".transfer-items-table .item-name-cell .multiselect")) {
+        el.blur();
+    }
+    const openWrapper = document.querySelector(".transfer-items-table .item-name-cell .multiselect--active");
+    if (openWrapper) {
+        const input = openWrapper.querySelector("input");
+        if (input) input.blur();
+    }
+}
+
+const page = usePage();
+const canCreateTransfer = computed(() =>
+    !!page.props.auth?.can?.transfer_create || !!page.props.auth?.can?.transfer_manage || !!page.props.auth?.user?.isAdmin || true
+);
+const localReasons = ref([...(props.reasons || [])]);
+const reasonOptions = computed(() => {
+    const list = localReasons.value;
+    return canCreateTransfer.value ? ['Add New Reason', ...list] : list;
+});
+const showAddReasonModal = ref(false);
+const newReasonName = ref("");
+const addingReason = ref(false);
+const currentDetailForReason = ref(null);
+
+function handleReasonSelect(detail, selected) {
+    if (selected === 'Add New Reason') {
+        openAddReasonModal();
+        currentDetailForReason.value = detail;
+        detail.transfer_reason = '';
+    } else {
+        detail.transfer_reason = selected;
+    }
+}
+
+function openAddReasonModal() {
+    showAddReasonModal.value = true;
+    newReasonName.value = "";
+}
+
+async function handleAddReason() {
+    if (!newReasonName.value.trim()) return;
+    addingReason.value = true;
+    try {
+        const response = await axios.post(route('reasons.store'), { name: newReasonName.value });
+        const newName = typeof response.data === 'string' ? response.data : response.data?.name;
+        if (newName) {
+            localReasons.value = [...localReasons.value, newName];
+        }
+        if (currentDetailForReason.value) {
+            currentDetailForReason.value.transfer_reason = newName || newReasonName.value;
+        }
+        showAddReasonModal.value = false;
+        newReasonName.value = '';
+    } catch (e) {
+        // handle error
+    } finally {
+        addingReason.value = false;
+    }
+}
+
+onMounted(() => {
+    nextTick(() => {
+        transferDateInputRef.value?.focus?.();
+    });
+    [0, 100, 250, 500, 800, 1200].forEach((ms) => {
+        if (ms === 0) nextTick(closeItemDropdownIfOpen);
+        else setTimeout(closeItemDropdownIfOpen, ms);
+    });
+});
 
 function formatDate(date) {
     return moment(date).format("DD/MM/YYYY");
@@ -484,8 +515,8 @@ function isExpiringSoon(expiryDate) {
                 </div>
             </div>
             <!-- Form Section -->
-            <div class="bg-white rounded-2xl border border-slate-200 p-8">
-                <form @submit.prevent="submit" class="space-y-8">
+            <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
+                <form ref="transferFormRef" @submit.prevent="submit" class="space-y-8">
                     <!-- Transfer Date -->
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div class="md:col-span-1">
@@ -493,6 +524,7 @@ function isExpiringSoon(expiryDate) {
                                 Transfer Date
                             </label>
                             <input
+                                ref="transferDateInputRef"
                                 type="date"
                                 v-model="form.transfer_date"
                                 class="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
@@ -576,10 +608,10 @@ function isExpiringSoon(expiryDate) {
 
                     <!-- Items Table Section -->
                     <div class="mb-4">
-                        <table class="w-full text-sm text-left table-sm rounded-t-lg">
+                        <table class="transfer-items-table w-full text-sm text-left table-sm rounded-t-lg table-fixed">
                             <thead>
                                 <tr style="background-color: #F4F7FB;">
-                                    <th class="min-w-[120px] px-3 py-2 text-xs font-bold rounded-tl-lg" style="color: #4F6FCB; border-bottom: 2px solid #B7C6E6;" rowspan="2">
+                                    <th class="w-[280px] min-w-[280px] max-w-[400px] px-3 py-2 text-xs font-bold rounded-tl-lg" style="color: #4F6FCB; border-bottom: 2px solid #B7C6E6;" rowspan="2">
                                         Item Name
                                     </th>
                                     <th class="px-3 py-2 text-xs font-bold" style="color: #4F6FCB; border-bottom: 2px solid #B7C6E6;" rowspan="2">
@@ -595,10 +627,10 @@ function isExpiringSoon(expiryDate) {
                                         Item details
                                     </th>
                                     
-                                    <th class="min-w-[150px] px-3 py-2 text-xs font-bold" style="color: #4F6FCB; border-bottom: 2px solid #B7C6E6;" rowspan="2">
+                                    <th class="w-[220px] min-w-[220px] max-w-[320px] px-3 py-2 text-xs font-bold" style="color: #4F6FCB; border-bottom: 2px solid #B7C6E6;" rowspan="2">
                                         Reasons for Transfers
                                     </th>
-                                    <th class="min-w-[110px] px-3 py-2 text-xs font-bold" style="color: #4F6FCB; border-bottom: 2px solid #B7C6E6;" rowspan="2">
+                                    <th class="w-[130px] max-w-[130px] px-3 py-2 text-xs font-bold" style="color: #4F6FCB; border-bottom: 2px solid #B7C6E6;" rowspan="2">
                                         Quantity to be transferred
                                     </th>
                                     <th class="px-3 py-2 text-xs font-bold" style="color: #4F6FCB; border-bottom: 2px solid #B7C6E6;" rowspan="2">
@@ -634,21 +666,26 @@ function isExpiringSoon(expiryDate) {
                                         
                                         <!-- Item Name - only on first row for this item -->
                                         <td v-if="detailIndex === 0" :rowspan="Math.max(item.details?.length || 1, 1)"
-                                            class="min-w-[200px] px-3 py-2 text-xs font-medium text-gray-800 align-top">
-                                            <div class="w-full">
+                                            class="item-name-cell w-[280px] min-w-[280px] max-w-[400px] px-3 py-2 text-xs font-medium text-gray-800 align-top overflow-visible">
+                                            <div class="w-full min-w-0 max-w-full">
                                                 <Multiselect
                                                     v-model="item.product"
-                                                    :value="item.product_id"
+                                                    :key="`item-select-${index}-${availableInventories.length}`"
                                                     :options="availableInventories"
                                                     placeholder="Search for an item..."
-                                                    required
                                                     track-by="id"
                                                     label="name"
                                                     :searchable="true"
                                                     :allow-empty="true"
+                                                    :prevent-autofocus="true"
                                                     :loading="isLoading[index]"
                                                     @select="handleProductSelect(index, $event)"
-                                                />
+                                                    @remove="handleProductClear(index)"
+                                                >
+                                                    <template v-slot:option="{ option }">
+                                                        <span>{{ option.name }}</span>
+                                                    </template>
+                                                </Multiselect>
                                             </div>
                                         </td>
 
@@ -667,7 +704,7 @@ function isExpiringSoon(expiryDate) {
                                         <!-- Total Quantity on Hand Per Unit - only on first row for this item -->
                                         <td v-if="detailIndex === 0" :rowspan="Math.max(item.details?.length || 1, 1)"
                                             class="px-3 py-2 text-xs text-gray-800 align-top">
-                                            {{ item.available_quantity || 0 }}
+                                            {{ getSafeAvailableQuantity(item) }}
                                         </td>
 
                                         <!-- Item Details Columns -->
@@ -692,26 +729,37 @@ function isExpiringSoon(expiryDate) {
                                         </td>
 
                                         <!-- Reasons for Transfers - per detail -->
-                                        <td class="px-2 py-1 text-xs text-center">
-                                        <Multiselect
-                                            v-if="item.product && detail.quantity"
-                                            v-model="detail.transfer_reason"
-                                            :options="props.reasons"
-                                            :searchable="true"
-                                            :close-on-select="true"
-                                            :show-labels="false"
-                                        />
+                                        <td class="reason-cell w-[220px] min-w-[220px] max-w-[320px] px-2 py-1 text-xs text-center">
+                                            <div class="w-full min-w-0 max-w-full">
+                                                <Multiselect
+                                                    v-if="item.product && detail.quantity"
+                                                    v-model="detail.transfer_reason"
+                                                    :options="reasonOptions"
+                                                    :searchable="true"
+                                                    :multiple="false"
+                                                    :close-on-select="true"
+                                                    :show-labels="false"
+                                                    placeholder="Select reason"
+                                                    @select="handleReasonSelect(detail, $event)"
+                                                >
+                                                    <template v-slot:option="{ option }">
+                                                        <span :class="{ 'text-blue-600 font-semibold': option === 'Add New Reason' }">
+                                                            {{ option }}
+                                                        </span>
+                                                    </template>
+                                                </Multiselect>
+                                            </div>
                                         </td>
 
                                         <!-- Quantity to be transferred - per detail -->
-                                        <td class="px-2 py-1 text-xs text-center">
+                                        <td class="w-[130px] max-w-[130px] px-2 py-1 text-xs text-center overflow-hidden">
                                             <input
                                                 v-if="item.product && detail.quantity"
                                                 type="number"
                                                 v-model.number="detail.quantity_to_transfer"
                                                 :max="detail.quantity"
                                                 min="0"
-                                                class="w-full text-xs border rounded px-2 py-1 text-center"
+                                                class="w-full max-w-full text-xs border rounded px-2 py-1 text-center box-border"
                                                 placeholder="0"
                                                 @input="updateItemQuantity(index)"
                                             />
@@ -748,15 +796,17 @@ function isExpiringSoon(expiryDate) {
                     <!-- Action Buttons -->
                     <div class="flex items-center justify-between pt-8 border-t border-gray-200">
                         <button
+                            v-if="canCreateTransfer"
                             type="button"
                             @click="addNewItem"
-                            class="inline-flex items-center px-6 py-3 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105"
+                            class="inline-flex items-center px-6 py-3 font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white"
                         >
                             <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
                             </svg>
                             Add Another Item
                         </button>
+                        <div v-else class="flex-1"></div>
                         <div class="flex items-center space-x-4">
                             <SecondaryButton
                                 :href="route('transfers.index')"
@@ -769,7 +819,11 @@ function isExpiringSoon(expiryDate) {
                             >
                                 Cancel
                             </SecondaryButton>
-                            <PrimaryButton :disabled="loading" class="relative px-8 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105">
+                            <PrimaryButton
+                                v-if="canCreateTransfer"
+                                :disabled="loading"
+                                class="relative px-8 py-3 font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white"
+                            >
                                 <span v-if="loading" class="absolute left-3">
                                     <svg
                                         class="animate-spin h-5 w-5 text-white"
@@ -802,4 +856,135 @@ function isExpiringSoon(expiryDate) {
             </div>
         </div>
     </AuthenticatedLayout>
+
+    <!-- Add Reason Modal -->
+    <div v-if="showAddReasonModal" class="fixed inset-0 z-50">
+        <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" @click="showAddReasonModal = false">
+            </div>
+            <div
+                class="inline-block align-bottom bg-white rounded-lg text-left shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                    <div class="sm:flex sm:items-start">
+                        <div
+                            class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 sm:mx-0 sm:h-10 sm:w-10">
+                            <svg class="h-6 w-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                            </svg>
+                        </div>
+                        <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
+                            <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">
+                                Add New Transfer Reason
+                            </h3>
+                            <form @submit.prevent="handleAddReason">
+                                <div class="mb-4">
+                                    <label for="reason_name" class="block text-sm font-medium text-gray-700">Reason
+                                        Name</label>
+                                    <input id="reason_name" v-model="newReasonName" type="text"
+                                        class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm"
+                                        placeholder="Enter reason name" required />
+                                </div>
+                                <div class="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse">
+                                    <button type="submit" :disabled="addingReason"
+                                        class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                                        <span v-if="addingReason" class="flex items-center">
+                                            <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none"
+                                                viewBox="0 0 24 24">
+                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
+                                                    stroke-width="4"></circle>
+                                                <path class="opacity-75" fill="currentColor"
+                                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                                                </path>
+                                            </svg>
+                                            Adding...
+                                        </span>
+                                        <span v-else>Add Reason</span>
+                                    </button>
+                                    <button type="button" @click="showAddReasonModal = false" :disabled="addingReason"
+                                        class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                                        Cancel
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 </template>
+
+<style scoped>
+.transfer-items-table th:nth-child(1),
+.transfer-items-table td:nth-child(1) {
+    width: 280px;
+    min-width: 280px;
+    max-width: 400px;
+    box-sizing: border-box;
+}
+.transfer-items-table th:nth-child(9),
+.transfer-items-table td:nth-child(9) {
+    width: 220px;
+    min-width: 220px;
+    max-width: 320px;
+    box-sizing: border-box;
+}
+.transfer-items-table th:nth-child(10),
+.transfer-items-table td:nth-child(10) {
+    width: 130px;
+    min-width: 130px;
+    max-width: 130px;
+    box-sizing: border-box;
+}
+.transfer-items-table td:nth-child(9) .multiselect {
+    width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+}
+.transfer-items-table td:nth-child(9) :deep(.multiselect__tags),
+.transfer-items-table td:nth-child(9) :deep(.multiselect__tags-wrap) {
+    min-width: 0 !important;
+    overflow: visible !important;
+}
+.transfer-items-table td:nth-child(9) :deep(.multiselect__single),
+.transfer-items-table td:nth-child(9) :deep(.multiselect__tag),
+.transfer-items-table td:nth-child(9) :deep(.multiselect__tag span) {
+    overflow: visible !important;
+    text-overflow: clip !important;
+    white-space: normal !important;
+    word-break: normal !important;
+    max-width: none !important;
+}
+.transfer-items-table td:nth-child(1) .multiselect {
+    width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+}
+.transfer-items-table td:nth-child(1) :deep(.multiselect__tags) {
+    min-width: 0 !important;
+    overflow: visible !important;
+}
+.transfer-items-table td:nth-child(1) :deep(.multiselect__tags-wrap) {
+    min-width: 0 !important;
+    overflow: visible !important;
+}
+.transfer-items-table td:nth-child(1) :deep(.multiselect__single),
+.transfer-items-table td:nth-child(1) :deep(.multiselect__tag),
+.transfer-items-table td:nth-child(1) :deep(.multiselect__tag span) {
+    overflow: visible !important;
+    text-overflow: clip !important;
+    white-space: normal !important;
+    word-break: normal !important;
+    max-width: none !important;
+}
+.transfer-items-table td:nth-child(10) input {
+    max-width: 100%;
+    box-sizing: border-box;
+}
+.transfer-items-table .item-name-cell :deep(.multiselect--active .multiselect__content-wrapper),
+.transfer-items-table .reason-cell :deep(.multiselect--active .multiselect__content-wrapper) {
+    z-index: 99999 !important;
+    position: absolute !important;
+}
+</style>

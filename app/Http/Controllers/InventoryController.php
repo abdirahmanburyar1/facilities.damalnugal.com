@@ -297,7 +297,6 @@ class InventoryController extends Controller
 		
 		return response()->json( $request->id ? 'Inventory updated successfully' : 'Inventory created successfully', 200);
 		} catch (\Throwable $th) {
-			logger()->error('[PUSHER-DEBUG] Error in store method: ' . $th->getMessage());
 			return response()->json($th->getMessage(), 500);
 		}
 	}
