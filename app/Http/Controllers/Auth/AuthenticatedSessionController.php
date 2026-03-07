@@ -21,6 +21,7 @@ class AuthenticatedSessionController extends Controller
         return Inertia::render('Auth/Login', [
             'canResetPassword' => Route::has('password.request'),
             'status' => session('status'),
+            'error' => session('error'),
         ]);
     }
 
@@ -33,9 +34,16 @@ class AuthenticatedSessionController extends Controller
 
         $request->session()->regenerate();
 
+        $user = auth()->user();
+
+        // Facility-only: users without a facility cannot use the application
+        if (!$user->facility) {
+            Auth::guard('web')->logout();
+            return redirect()->route('login')->with('error', 'Your account is not linked to a facility. Please contact an administrator to assign a facility before accessing Inventory.');
+        }
+
         // Check for trusted device
         $trustedToken = $request->cookie('trusted_device_token');
-        $user = auth()->user();
         
         if ($trustedToken && $user) {
             $trustedDevice = \App\Models\TrustedDevice::where('user_id', $user->id)

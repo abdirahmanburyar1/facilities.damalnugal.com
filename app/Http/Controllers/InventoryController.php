@@ -27,20 +27,20 @@ use Maatwebsite\Excel\Facades\Excel;
 use App\Imports\UploadInventory;
 use App\Services\InventoryAnalyticsService;
 use App\Models\InventoryItem;
+use App\Models\Location;
 
 class InventoryController extends Controller
 {
 	public function index(Request $request)
 	{
 		try {
-			// Get the current user's facility
 			$user = auth()->user();
 			$facility = $user->facility;
-			
+
 			if (!$facility) {
 				return back()->withErrors(['error' => 'User is not associated with any facility.']);
 			}
-			
+
 		// Base query with relationships - filter products by eligible items for this facility type
 		$productQuery = Product::query()
 			->with([
@@ -158,7 +158,17 @@ class InventoryController extends Controller
 					);
 					$products->withQueryString();
 				} catch (\Exception $e) {
-					// Continue without filtering if there's an error
+					// Fallback: paginate all products when filtering fails so $products is always defined
+					$perPage = $request->input('per_page', 25);
+					$currentPage = $request->input('page', 1);
+					$products = new \Illuminate\Pagination\LengthAwarePaginator(
+						$allProducts->forPage($currentPage, $perPage)->values(),
+						$allProducts->count(),
+						$perPage,
+						$currentPage,
+						['path' => request()->url(), 'pageName' => 'page']
+					);
+					$products->withQueryString();
 				}
 			}
 	

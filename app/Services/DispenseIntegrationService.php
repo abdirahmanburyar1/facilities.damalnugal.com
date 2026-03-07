@@ -29,13 +29,15 @@ class DispenseIntegrationService
             DB::beginTransaction();
 
             // Get or create monthly consumption report for the facility and month
-            $monthlyReport = MonthlyConsumptionReport::firstOrCreate([
-                'facility_id' => $facilityId,
-                'month_year' => $monthYear,
-            ], [
-                'status' => 'draft',
-                'created_by' => auth()->id(),
-            ]);
+            $monthlyReport = MonthlyConsumptionReport::firstOrCreate(
+                [
+                    'facility_id' => $facilityId,
+                    'month_year' => $monthYear,
+                ],
+                [
+                    'generated_by' => auth()->id(),
+                ]
+            );
 
             // Aggregate Dispence data (patient-level dispensing)
             $dispenceData = $this->aggregateDispenceData($facilityId, $monthYear);

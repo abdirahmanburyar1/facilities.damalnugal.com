@@ -1150,7 +1150,7 @@ class OrderController extends Controller
             $inThePipeline = OrderItem::where('product_id', $productId)
                 ->whereHas('order', function ($query) use ($facility) {
                     $query->where('facility_id', $facility->id)
-                        ->where('status', '!=', 'received');
+                        ->whereNotIn('status', ['received', 'rejected']);
                 })
                 ->first();
     

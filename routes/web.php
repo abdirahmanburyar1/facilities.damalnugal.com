@@ -19,6 +19,7 @@ use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ReasonController;
 use App\Http\Controllers\DeliveryController;
 use App\Http\Controllers\FacilityReorderLevelController;
+use App\Http\Controllers\MonthlyConsumptionController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -40,8 +41,8 @@ Route::get('/', function () {
     ]);
 })->name('welcome');
 
-// All routes that require 2FA
-Route::middleware(['auth', 'verified', \App\Http\Middleware\TwoFactorAuth::class])->group(function () {
+// All routes that require 2FA and a valid facility (user without facility or with removed/inactive facility is logged out immediately)
+Route::middleware(['auth', 'verified', \App\Http\Middleware\TwoFactorAuth::class, \App\Http\Middleware\EnsureUserHasFacility::class])->group(function () {
     // Dashboard routes
     Route::controller(App\Http\Controllers\DashboardController::class)
     ->group(function () {
@@ -107,6 +108,14 @@ Route::middleware(['auth', 'verified', \App\Http\Middleware\TwoFactorAuth::class
             // products for templates (used by facility reorder levels modal)
             Route::get('/template-products', [ReportController::class, 'getTemplateProducts'])->name('inventory.template-products');
         });
+
+    // Monthly Consumption (AMC) - under inventories namespace for Ziggy/frontend
+    Route::controller(MonthlyConsumptionController::class)->group(function () {
+        Route::get('/inventories/monthly-consumption', 'index')->name('inventories.monthly-consumption');
+        Route::get('/inventories/monthly-consumption/data', 'data')->name('inventories.monthly-consumption.data');
+        Route::get('/inventories/monthly-consumption/template', 'template')->name('inventories.monthly-consumption.template');
+        Route::post('/monthly-consumption/upload', 'upload')->name('monthly-consumption.upload');
+    });
     
     // Settings Routes
     Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');

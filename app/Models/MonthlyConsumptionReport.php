@@ -17,9 +17,7 @@ class MonthlyConsumptionReport extends Model
         'facility_id',
         'month_year',
         'status',
-        'created_by',
-        'approved_by',
-        'approved_at',
+        'created_by'
     ];
 
     protected $casts = [
@@ -41,8 +39,4 @@ class MonthlyConsumptionReport extends Model
         return $this->belongsTo(User::class, 'created_by');
     }
 
-    public function approvedBy(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'approved_by');
-    }
 }

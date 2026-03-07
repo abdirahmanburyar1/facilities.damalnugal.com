@@ -15,6 +15,9 @@ defineProps({
     status: {
         type: String,
     },
+    error: {
+        type: String,
+    },
 });
 
 const form = useForm({
@@ -66,6 +69,10 @@ const togglePasswordVisibility = () => {
                 
                 <div v-if="status" class="status-message">
                     {{ status }}
+                </div>
+
+                <div v-if="error" class="error-message">
+                    {{ error }}
                 </div>
 
                 <form @submit.prevent="submit" class="login-form">
@@ -187,6 +194,16 @@ const togglePasswordVisibility = () => {
     margin-bottom: 1.5rem;
     border-radius: 4px;
     color: #2f855a;
+    font-weight: 500;
+}
+
+.error-message {
+    background-color: #fff5f5;
+    border-left: 4px solid #e53e3e;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    border-radius: 4px;
+    color: #c53030;
     font-weight: 500;
 }
 

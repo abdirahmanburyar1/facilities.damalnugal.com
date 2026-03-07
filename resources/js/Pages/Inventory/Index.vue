@@ -46,6 +46,7 @@ const isUploading = ref(false);
 const uploadProgress = ref(0);
 const uploadResults = ref(null);
 const importId = ref(null);
+const uploadMode = ref('inventory'); // 'inventory' | 'monthly_consumption'
 
 // Apply filters with debouncing
 const applyFilters = () => {
@@ -75,7 +76,6 @@ const applyFilters = () => {
             preserveScroll: true,
             only: [
                 "inventories",
-                "products",
                 "inventoryStatusCounts",
                 "category",
             ],
@@ -181,7 +181,6 @@ const clearFilters = () => {
         preserveScroll: true,
         only: [
             "inventories",
-            "products",
             "inventoryStatusCounts",
             "category",
         ],
@@ -199,7 +198,8 @@ const clearFilters = () => {
 };
 
 // Upload modal functions
-const openUploadModal = () => {
+const openUploadModal = (mode = 'inventory') => {
+    uploadMode.value = mode;
     showUploadModal.value = true;
 };
 
@@ -271,8 +271,12 @@ const uploadFile = async () => {
     const formData = new FormData();
     formData.append("file", selectedFile.value);
 
+    const routeName = uploadMode.value === 'monthly_consumption'
+        ? "monthly-consumption.upload"
+        : "inventories.import";
+
     await axios.post(
-        route("inventories.import"),
+        route(routeName),
         formData,
         {
             headers: {
@@ -481,6 +485,11 @@ const combinedReorderLevelCount = computed(() => {
     return lowStockReorderLevel;
 });
 
+const totalProducts = computed(() => props.inventories?.meta?.total ?? 0);
+
+// Safe pagination data so TailwindPagination never receives undefined
+const paginationData = computed(() => props.inventories ?? { data: [], meta: { total: 0, from: null, to: null } });
+
 function getResults(page = 1) {
     if (props.filters) {
         props.filters.page = page;
@@ -511,10 +520,10 @@ onUnmounted(() => {
                     <p class="text-sm text-gray-600 mt-1">Manage your facility's inventory items and track stock levels</p>
                 </div>
                 <div class="flex flex-wrap gap-2 md:gap-4 items-center">
-                    <button @click="openUploadModal"
+                    <button @click="openUploadModal('inventory')"
                         class="inline-flex items-center px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 border border-transparent rounded-lg font-medium text-sm text-white hover:from-amber-600 hover:to-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 transition-all duration-200 shadow-sm"
                         :disabled="isUploading">
-                        <svg v-if="!isUploading" class="h-4 w-4 mr-2" fill="none" stroke="currentColor"
+                        <svg v-if="!isUploading || uploadMode === 'inventory'" class="h-4 w-4 mr-2" fill="none" stroke="currentColor"
                             viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12">
@@ -527,8 +536,14 @@ onUnmounted(() => {
                                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
                             </path>
                         </svg>
-                        {{ isUploading ? 'Uploading...' : 'Upload Excel' }}
+                        {{ isUploading && uploadMode === 'inventory' ? 'Uploading...' : 'Upload Excel' }}
                     </button>
+                    <Link
+                        :href="route('inventories.monthly-consumption')"
+                        class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg font-medium text-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all duration-200 shadow-sm"
+                    >
+                        AMC
+                    </Link>
                 </div>
             </div>
             
@@ -1031,7 +1046,7 @@ onUnmounted(() => {
                                 <span v-else>No products to display</span>
                             </div>
 
-                            <TailwindPagination :data="props.inventories" @pagination-change-page="getResults"
+                            <TailwindPagination :data="paginationData" @pagination-change-page="getResults"
                                 :limit="2" />
                         </div>
                     </div>
@@ -1106,8 +1121,17 @@ onUnmounted(() => {
             <div class="bg-white w-full h-full overflow-y-auto" @click.stop>
                 <div class="flex items-center justify-between p-6 border-b border-gray-200">
                     <div>
-                        <h3 class="text-lg font-semibold text-gray-900">Upload Inventory</h3>
-                        <p class="text-sm text-gray-500 mt-1">Import inventory items from Excel file</p>
+                        <h3 class="text-lg font-semibold text-gray-900">
+                            {{ uploadMode === 'monthly_consumption' ? 'Upload Monthly Consumption' : 'Upload Inventory' }}
+                        </h3>
+                        <p class="text-sm text-gray-500 mt-1">
+                            <span v-if="uploadMode === 'monthly_consumption'">
+                                Import facility monthly consumption data from Excel file (item rows with month columns).
+                            </span>
+                            <span v-else>
+                                Import inventory items from Excel file.
+                            </span>
+                        </p>
                     </div>
                     <button @click="closeUploadModal"
                         class="text-gray-400 hover:text-gray-600 transition-colors duration-200">
@@ -1120,8 +1144,9 @@ onUnmounted(() => {
                 </div>
 
                 <div class="p-6">
-                    <!-- Download Template Section -->
+                    <!-- Download Template Section (inventory only) -->
                     <div
+                        v-if="uploadMode === 'inventory'"
                         class="mb-6 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg">
                         <div class="flex items-start">
                             <div class="flex-shrink-0">
